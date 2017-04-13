@@ -1,0 +1,23 @@
+- name: Copy vartti-client.properties
+  template: src={{ tempdir }}/vartti-client.properties.template dest={{ tempdir }}/filled/vartti-client.properties
+
+- name: Copy tomcat server.xml
+  template: src={{ tempdir }}/server.xml.template dest={{ tempdir }}/filled/server.xml
+
+- name: Copy setenv.sh
+  template: src={{ tempdir }}/setenv.sh.template dest={{ tempdir }}/filled/setenv.sh
+
+- name: Copy logback configuration
+  template: src={{ tempdir }}/logback.xml.template dest={{ tempdir }}/filled/logback.xml
+
+- name: Copy tomcat keystore (internal cert)
+  local_action: copy src={{ conf_root }}/certs/{{ host }}/tomcat_keystore dest={{ tempdir }}/filled/tomcat_keystore
+
+- name: Copy vartti-client-keystore (vartti api client certificate + key)
+  local_action: copy src={{ conf_root }}/certs/{{ vartti_directory }}/{{ vartti_keystore }} dest={{ tempdir }}/filled/{{ vartti_keystore }}
+
+- name: Copy vartti-client-truststore (vartti api remote certificate)
+  local_action: copy src={{ conf_root }}/certs/{{ vartti_directory }}/{{ vartti_truststore }} dest={{ tempdir }}/filled/{{ vartti_truststore }}
+
+- name: Create filled template tar
+  local_action: shell tar -C {{ tempdir }}/filled/ -zvcf {{ tempdir }}/filled_templates.tgz .

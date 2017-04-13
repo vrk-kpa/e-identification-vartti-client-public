@@ -1,0 +1,16 @@
+vartti.url={{vartti_url}}
+vartti.application.name={{vartti_application_name}}
+vartti.role.name={{vartti_role_name}}
+vartti.signature.validity.mins={{vartti_signature_validity_mins}}
+vartti.keystore=/data00/deploy/{{vartti_keystore}}
+vartti.keystore.password={{vartti_keystore_password}}
+vartti.keystore.keypassword={{vartti_keystore_keypassword}}
+vartti.keystore.alias={{vartti_keystore_alias}}
+vartti.truststore=/data00/deploy/{{vartti_truststore}}
+vartti.truststore.password={{vartti_truststore_password}}
+vartti.api.logging={{vartti_api_logging}}
+vartti.client.dummydata={{vartti_client_dummydata | default('false')}}
+vartti.client.dummydata.hetu={{vartti_client_dummydata_hetu | default('210281-9988')}}
+vartti.connection.timeout={{vartti_connection_timeout}}
+vartti.read.timeout={{vartti_read_timeout}}
+vartti.proxy.uri={{vartti_proxy_uri | default('')}}
