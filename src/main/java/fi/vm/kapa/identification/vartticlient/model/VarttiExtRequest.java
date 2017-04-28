@@ -59,4 +59,12 @@ public class VarttiExtRequest {
     public void setUserContext(VarttiExtUserContext userContext) {
         this.userContext = userContext;
     }
+
+    public String toString()
+    {
+        return String.format("{searchTerm=%s, certificate=%s, userContext=%s}",
+                searchTerm,
+                certificate.toString(),
+                userContext.toString());
+    }
 }

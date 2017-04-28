@@ -22,22 +22,42 @@
  */
 package fi.vm.kapa.identification.config;
 
+import fi.vm.kapa.identification.vartticlient.VarttiSigner;
 import fi.vm.kapa.identification.vartticlient.services.DummyVarttiService;
 import fi.vm.kapa.identification.vartticlient.services.RealVarttiService;
 import fi.vm.kapa.identification.vartticlient.services.VarttiService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+
+import javax.inject.Named;
+import javax.ws.rs.client.Client;
 
 @Configuration
+@Import({ HttpClientConfiguration.class, VarttiSignerConfiguration.class })
 public class VarttiServiceConfiguration {
+
+    private static final Logger logger = LoggerFactory.getLogger(VarttiServiceConfiguration.class);
 
     @Value("${vartti.client.dummydata}")
     private boolean varttiDummyDataEnabled;
+    @Value("${vartti.url}")
+    private String varttiEndpoint;
 
-    private static final Logger logger = LoggerFactory.getLogger(RealVarttiService.class);
+    @Autowired
+    @Named("httpsClient")
+    Client httpsClient;
+
+    @Autowired
+    @Named("httpClient")
+    Client httpClient;
+
+    @Autowired
+    VarttiSigner varttiSigner;
 
     @Bean(name = "VarttiService")
     VarttiService provideVarttiService() {
@@ -46,7 +66,11 @@ public class VarttiServiceConfiguration {
             return new DummyVarttiService();
         } else {
             logger.info("Returning new RealVarttiService instance");
-            return new RealVarttiService();
+            if (varttiEndpoint.startsWith("https")) {
+                return new RealVarttiService(httpsClient, varttiSigner);
+            } else {
+                return new RealVarttiService(httpClient, varttiSigner);
+            }
         }
     }
 }

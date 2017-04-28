@@ -20,23 +20,17 @@
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
   THE SOFTWARE.
  */
-package fi.vm.kapa.identification;
+package fi.vm.kapa.identification.vartticlient.exception;
 
-import org.junit.Test;
+public class VarttiParsingException extends Exception {
 
-import org.junit.runner.RunWith;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
+    private static final long serialVersionUID = 1L;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest
+    public VarttiParsingException(String reason, Throwable t) {
+        super(reason, t);
+    }
 
-@TestPropertySource(locations="classpath:test.properties")
-public class VarttiClientApplicationTests {
-
-	@Test
-	public void contextLoads() {
-	}
-
+    public VarttiParsingException(String reason) {
+        super(reason);
+    }
 }

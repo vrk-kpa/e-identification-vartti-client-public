@@ -22,33 +22,21 @@
  */
 package fi.vm.kapa.identification.vartticlient.services;
 
+import fi.vm.kapa.identification.vartticlient.*;
 import fi.vm.kapa.identification.vartticlient.exception.*;
 import fi.vm.kapa.identification.vartticlient.model.*;
 import org.apache.commons.lang.StringUtils;
-import org.glassfish.jersey.SslConfigurator;
-import org.glassfish.jersey.apache.connector.ApacheConnectorProvider;
-import org.glassfish.jersey.client.ClientConfig;
-import org.glassfish.jersey.client.ClientProperties;
-import org.glassfish.jersey.jackson.JacksonFeature;
-import org.glassfish.jersey.logging.LoggingFeature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 
-import javax.net.ssl.SSLContext;
 import javax.ws.rs.client.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.security.*;
-import java.security.cert.CertificateException;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.StringJoiner;
 
 public class RealVarttiService implements VarttiService {
@@ -61,126 +49,116 @@ public class RealVarttiService implements VarttiService {
     private String varttiRoleName;
     @Value("${vartti.signature.validity.mins}")
     private int varttiSignatureValidityTime;
-    @Value("${vartti.keystore}")
-    private String varttiKeystoreFilename;
-    @Value("${vartti.keystore.alias}")
-    private String varttiKeystoreAlias;
-    @Value("${vartti.keystore.password}")
-    private String varttiKeystorePass;
-    @Value("${vartti.keystore.keypassword}")
-    private String varttiKeystoreKeyPass;
-    @Value("${vartti.truststore}")
-    private String varttiTruststoreFilename;
-    @Value("${vartti.truststore.password}")
-    private String varttiTruststorePass;
-    @Value("${vartti.api.logging}")
-    private boolean varttiAPILogging;
-    @Value("${vartti.connection.timeout}")
-    private int varttiConnectionTimeout;
-    @Value("${vartti.read.timeout}")
-    private int varttiReadTimeout;
-    @Value("${vartti.proxy.uri}")
-    private String varttiProxyURI;
 
-    private KeyStore varttiKeystore;
+    private Client client;
+    private VarttiSigner varttiSigner;
 
     private static final Logger logger = LoggerFactory.getLogger(RealVarttiService.class);
+
+    public RealVarttiService(Client client, VarttiSigner varttiSigner) {
+        this.client = client;
+        this.varttiSigner = varttiSigner;
+    }
 
     @Override
     public VarttiResponse getVarttiResponse(String identifier, String certSerial, String issuerCN)
     {
         VarttiResponse varttiResponse = new VarttiResponse();
-        try {
-            initializeVarttiKeystore();
-            VarttiExtRequest varttiExtRequest = generateVarttiExtRequest(identifier, certSerial, issuerCN, varttiKeystore);
-            VarttiExtResponse varttiExtResponse = getVarttiExtResponse(varttiExtRequest); // Vartti API
-            varttiResponse.setSuccess(true);
-            VarttiPerson varttiPerson = new VarttiPerson();
-            varttiPerson.setHetu(varttiExtResponse.getHetu());
-            varttiResponse.setVarttiPerson(varttiPerson);
-        }
-        catch (Exception e)
+        varttiResponse.setSuccess(false); // success=false by default
+
+        VarttiExtRequest varttiExtRequest;
+
+        // Phase 1: Initialize Vartti request
+        try
         {
-            logger.error("Vartti connection error: {}", e.getMessage(), e);
-            varttiResponse.setSuccess(false);
+            varttiExtRequest = generateVarttiExtRequest(identifier, certSerial, issuerCN);
+        }
+        catch (VarttiInitException e)
+        {
+            // Initialization should never fail if configuration is good (always log these on ERROR level)
+            logger.error("Vartti initialization error: {}", e.getMessage(), e);
+            varttiResponse.setError(e.getMessage());
+            return varttiResponse;
+        }
+
+        // Phase 2: Perform actual request to Vartti API
+        try
+        {
+            VarttiExtResponse varttiExtResponse = getVarttiExtResponse(varttiExtRequest); // Vartti API
+            int statusCode = varttiExtResponse.getHttpStatusCode();
+
+            // VarttiExtRequest was received with successful status
+            if (statusCode == HttpStatus.OK.value())
+            {
+                String hetu = varttiExtResponse.getHetu();
+                if (StringUtils.isBlank(hetu)) {
+                    throw new VarttiServiceException("Vartti returned OK status with empty hetu.");
+                }
+                varttiResponse.setSuccess(true);
+                VarttiPerson varttiPerson = new VarttiPerson();
+                varttiPerson.setHetu(hetu);
+                varttiResponse.setVarttiPerson(varttiPerson);
+            }
+            // VarttiExtRequest was received with error code
+            else
+            {
+                String errorMessage = statusCode + " " + varttiExtResponse.getErrorCode() + ": " + varttiExtResponse.getErrorMessage();
+                varttiResponse.setError(errorMessage);
+                if (!(statusCode == HttpStatus.BAD_REQUEST.value() || statusCode == HttpStatus.NOT_FOUND.value()))
+                {
+                    // Vartti seems to return 400 (Bad Request) with errorCodes:
+                    //   VarmennetiedotServiceError.HetuNotFound
+                    //   VarmennetiedotServiceError.CertificateIssuerCNInvalid
+                    // According to examples in Vartti specification, it SHOULD return 404 in CertificateIssuerCNInvalid case.
+                    // Also, status code 404 would be a good fit for HetuNotFound case. But currently it seems to be 400.
+                    throw new VarttiServiceException("Vartti returned unexpected error: "+errorMessage);
+                }
+            }
+        }
+        catch (VarttiConnectionException |VarttiParsingException e)
+        {
+            logger.warn(e.getMessage());
+            varttiResponse.setError(e.getMessage());
+        }
+        catch (VarttiServiceException e)
+        {
+            logger.error(e.getMessage());
             varttiResponse.setError(e.getMessage());
         }
         return varttiResponse;
     }
 
-    private VarttiExtResponse getVarttiExtResponse(VarttiExtRequest req) throws VarttiServiceException
-    {
-        Response response = getVarttiExtHttpResponse(req);
-        if (response.getStatus() == HttpStatus.OK.value()) {
-            return response.readEntity(VarttiExtResponse.class);
-        } else {
-            logger.error("Vartti connection error: " + response.getStatus());
-            throw new VarttiServiceException("Vartti connection error: " + response.getStatus());
-        }
-    }
-
-    private Response getVarttiExtHttpResponse(VarttiExtRequest req) throws VarttiServiceException
+    protected VarttiExtResponse getVarttiExtResponse(VarttiExtRequest req)
+            throws VarttiServiceException, VarttiConnectionException, VarttiParsingException
     {
         Response response;
+        VarttiExtResponse extResponse;
         try {
-            WebTarget webTarget = getClient(varttiEndpoint).target(varttiEndpoint);
+            WebTarget webTarget = client.target(varttiEndpoint);
             Invocation.Builder invocationBuilder = webTarget.request(MediaType.APPLICATION_JSON);
             response = invocationBuilder.post(Entity.entity(req,MediaType.APPLICATION_JSON));
         }
         catch (Exception e) {
-            logger.error("Vartti connection failed: "+e.getMessage(), e);
-            throw new VarttiServiceException("Vartti connection failed.");
+            throw new VarttiConnectionException("Vartti connection failed: "+e.getMessage());
         }
-        return response;
+        try {
+            extResponse = response.readEntity(VarttiExtResponse.class);
+        }
+        catch (Exception e)
+        {
+            throw new VarttiParsingException("Vartti response parsing failed: "+e.getMessage());
+        }
+        return extResponse;
     }
 
-    // Generate new client with Jackson as JSON implementation
-    //  - uri as parameter to decide whether SSL is needed for connection
-    private Client getClient(String uri)
-    {
-        ClientConfig clientConfig = new ClientConfig()
-                .connectorProvider(new ApacheConnectorProvider())
-                .property(ClientProperties.CONNECT_TIMEOUT, varttiConnectionTimeout)
-                .property(ClientProperties.READ_TIMEOUT, varttiReadTimeout);
-
-        // If proxy is defined, configure it into use
-        if (StringUtils.isNotBlank(varttiProxyURI))
-        {
-            logger.info("Using proxy server: "+varttiProxyURI);
-            clientConfig = clientConfig.property(ClientProperties.PROXY_URI, varttiProxyURI);
-        }
-        if (varttiAPILogging)
-        {
-            // Note: .property returns updated configuration but it is not guaranteed to be the same object
-            clientConfig = clientConfig.property(LoggingFeature.LOGGING_FEATURE_VERBOSITY_CLIENT, LoggingFeature.Verbosity.PAYLOAD_ANY);
-            clientConfig = clientConfig.property(LoggingFeature.LOGGING_FEATURE_LOGGER_LEVEL_CLIENT, "INFO"); // java.util.logging.Level
-        }
-        ClientBuilder clientBuilder = ClientBuilder.newBuilder().withConfig(clientConfig);
-        if (uri.startsWith("https"))
-        {
-            logger.info("Creating SSL context for URI: "+uri);
-            SslConfigurator sslConfig = SslConfigurator.newInstance()
-                    .trustStoreFile(varttiTruststoreFilename)
-                    .trustStorePassword(varttiTruststorePass)
-                    .keyStoreFile(varttiKeystoreFilename)
-                    .keyStorePassword(varttiKeystorePass);
-            SSLContext ssl = sslConfig.createSSLContext();
-            clientBuilder.sslContext(ssl);
-        }
-        Client client = clientBuilder.build();
-        client.register(JacksonFeature.class);
-        client.register(LoggingFeature.class);
-        return client;
-    }
-
-    private VarttiExtRequest generateVarttiExtRequest(String identifier, String certSerial, String issuerCN, KeyStore signingKeyStore) throws VarttiServiceException
+    protected VarttiExtRequest generateVarttiExtRequest(String identifier, String certSerial, String issuerCN) throws VarttiInitException
     {
         VarttiExtRequest varttiRequest = new VarttiExtRequest();
         VarttiExtUserContext varttiContext = new VarttiExtUserContext();
         VarttiExtCertificate varttiCertificate = new VarttiExtCertificate();
         varttiRequest.setSearchTerm(identifier);
 
-        DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmssX").withZone(ZoneId.of("UTC")); // Format v2.0-Tieto: 20161111015354Z
+        DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmssX").withZone(ZoneId.of("UTC")); // 20161111015354Z
         // Generate expiration timestamp
         ZonedDateTime dateTime = ZonedDateTime.now().plusMinutes(varttiSignatureValidityTime); // Set ExpiresAt to be 30 minutes from now
         String dateTimeString = dateTime.format(dateTimeFormatter);
@@ -191,7 +169,7 @@ public class RealVarttiService implements VarttiService {
         joiner.add(varttiApplicationName).add(identifier).add(varttiRoleName).add(dateTimeString);
         String signData = joiner.toString();
         logger.info("Data to sign: "+signData);
-        String signature = generateSignature(signingKeyStore, varttiKeystoreAlias, varttiKeystoreKeyPass, signData);
+        String signature = varttiSigner.generateSignature(signData);
 
         // Populate and set UserContext
         varttiContext.setExpiresAt(dateTimeString);
@@ -207,46 +185,6 @@ public class RealVarttiService implements VarttiService {
         varttiRequest.setCertificate(varttiCertificate);
 
         return varttiRequest;
-    }
-
-    private String generateSignature(KeyStore ks, String alias, String keyPassword, String signData) throws VarttiServiceException
-    {
-        try {
-            Key key = ks.getKey(alias, keyPassword.toCharArray()); // instanceof PrivateKey
-            Signature sig = Signature.getInstance("SHA1WithRSA");
-            sig.initSign((PrivateKey)key);
-            sig.update(signData.getBytes("UTF-16LE")); // In C# (Vartti impl.) Encoding.Unicode
-            return Base64.getEncoder().encodeToString(sig.sign());
-        }
-        catch (KeyStoreException|NoSuchAlgorithmException|UnrecoverableKeyException|InvalidKeyException|
-                UnsupportedEncodingException|SignatureException|NullPointerException e)
-        {
-            logger.error("Unable to generate signature: "+e.getMessage(), e);
-            throw new VarttiServiceException("Unable to generate signature");
-        }
-    }
-
-    // Initialize Vartti keystore (needed for creating cryptographic signature)
-    private void initializeVarttiKeystore() throws VarttiServiceException
-    {
-        if (varttiKeystore != null) {
-            return; // If already initialized, no need to re-init
-        }
-
-        try (FileInputStream is = new FileInputStream(varttiKeystoreFilename)) { // try-with-resources; AutoCloseable
-            varttiKeystore = KeyStore.getInstance(KeyStore.getDefaultType());
-            varttiKeystore.load(is, varttiKeystorePass.toCharArray());
-        }
-        catch (IOException e)
-        {
-            logger.error("Unable to access Vartti keystore: "+e.getMessage(), e);
-            throw new VarttiServiceException("Unable to access keystore");
-        }
-        catch (KeyStoreException|NoSuchAlgorithmException|CertificateException e)
-        {
-            logger.error("Error creating KeyStore instance: "+e.getMessage(), e);
-            throw new VarttiServiceException("Unable to create keystore instance");
-        }
     }
 
 }

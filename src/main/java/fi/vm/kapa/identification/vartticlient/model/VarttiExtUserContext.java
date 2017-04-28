@@ -79,4 +79,10 @@ public class VarttiExtUserContext {
     public void setSignature(String signature) {
         this.signature = signature;
     }
+
+    public String toString()
+    {
+        return String.format("{applicationName=%s, authenticatedUser=%s, expiresAt=%s, roleName=%s, signature=%s}",
+                applicationName, authenticatedUser, expiresAt, roleName, signature);
+    }
 }

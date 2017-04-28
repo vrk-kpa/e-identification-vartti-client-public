@@ -50,4 +50,8 @@ public class VarttiExtCertificate {
         this.serialNumber = serialNumber;
     }
 
+    public String toString()
+    {
+        return String.format("{issuerCN=%s, serialNumber=%s}", issuerCN, serialNumber);
+    }
 }
