@@ -83,6 +83,22 @@
 					</execution>
 				</executions>
 			</plugin>
+			<plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>5.0.0-M3</version>
+                <configuration>
+                    <failBuildOnCVSS>11</failBuildOnCVSS>
+                    <!-- <suppressionFiles>${basedir}/suppressions.xml</suppressionFiles> -->
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+              </executions>
+            </plugin>
 
 		</plugins>
 	</build>
